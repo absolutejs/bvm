@@ -1,0 +1,15 @@
+{
+	"name": "@absolutejs/bvm",
+	"version": "0.0.0",
+	"description": "Install, switch and verify Bun versions (official and AbsoluteJS builds) on Linux, macOS and Windows",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/absolutejs/bvm.git"
+	},
+	"bin": {
+		"bvm": "bin/bvm.js"
+	},
+	"files": ["bin", "README.md"],
+	"optionalDependencies": {}
+}

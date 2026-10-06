@@ -8,6 +8,7 @@ mod paths;
 mod platform;
 mod resolve;
 mod run;
+mod selfmanage;
 mod setup;
 mod verify;
 
@@ -75,6 +76,18 @@ enum Command {
     },
     /// Install the shims and add them to your shell's PATH.
     Setup,
+    /// Manage bvm itself.
+    #[command(name = "self")]
+    Bvm {
+        #[command(subcommand)]
+        action: SelfAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SelfAction {
+    /// Replace bvm with the latest signed release.
+    Update,
 }
 
 fn installed_version(text: &str) -> Result<Version> {
@@ -97,35 +110,6 @@ fn installed_version(text: &str) -> Result<Version> {
         ));
     }
     Ok(version)
-}
-
-/// Link (or, where links are not possible, copy) bvm into `~/.bvm/bin` as
-/// `bvm`, `bun` and `bunx`.
-fn install_shims() -> Result<()> {
-    let bin = paths::bin_dir()?;
-    fs::create_dir_all(&bin)?;
-    let me = std::env::current_exe().context("cannot locate the bvm binary")?;
-    let suffix = platform::exe_suffix();
-    for name in ["bvm", "bun", "bunx"] {
-        let target = bin.join(format!("{name}{suffix}"));
-        if target.exists() && same_file(&me, &target) {
-            continue;
-        }
-        let staged = bin.join(format!(".{name}{suffix}.new"));
-        let _ = fs::remove_file(&staged);
-        if fs::hard_link(&me, &staged).is_err() {
-            fs::copy(&me, &staged)?;
-        }
-        fs::rename(&staged, &target)?;
-    }
-    Ok(())
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (fs::canonicalize(a), fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
 }
 
 fn run_shim(name: &str, args: Vec<OsString>) -> Result<i32> {
@@ -252,7 +236,8 @@ fn run_cli() -> Result<i32> {
             print!("{text}");
         }
         Command::Setup => {
-            install_shims()?;
+            let me = std::env::current_exe().context("cannot locate the bvm binary")?;
+            selfmanage::place_shims(&me)?;
             let changed = setup::setup()?;
             eprintln!("bvm: shims installed in {}", paths::bin_dir()?.display());
             for file in &changed {
@@ -260,6 +245,9 @@ fn run_cli() -> Result<i32> {
             }
             eprintln!("bvm: open a new terminal (or run `eval \"$(bvm env)\"`) to start using it");
         }
+        Command::Bvm {
+            action: SelfAction::Update,
+        } => selfmanage::update()?,
     }
     Ok(0)
 }
