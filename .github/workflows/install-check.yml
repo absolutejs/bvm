@@ -1,0 +1,61 @@
+name: Install check
+
+# Installs the latest published release the ways users do (install.sh,
+# install.ps1, npm) on each OS, then uses it. Runs when a release is
+# published, weekly, and on demand.
+
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  script:
+    name: install script on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Install with install.sh
+        if: runner.os != 'Windows'
+        run: |
+          touch "$HOME/.bashrc"
+          curl -fsSL https://raw.githubusercontent.com/absolutejs/bvm/main/install.sh | sh
+          echo "$HOME/.bvm/bin" >> "$GITHUB_PATH"
+      - name: Install with install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://raw.githubusercontent.com/absolutejs/bvm/main/install.ps1 | iex
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.bvm\bin"
+      - name: Use it
+        shell: bash
+        run: |
+          bvm --version
+          bvm install latest --default
+          bun --version
+          bvm self update
+
+  npm:
+    name: npm on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Install from npm and run
+        shell: bash
+        run: |
+          mkdir t && cd t && echo '{"name":"t","private":true}' > package.json
+          npm install @absolutejs/bvm --no-audit --no-fund
+          npx --no-install bvm --version
