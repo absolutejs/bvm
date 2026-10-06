@@ -30,3 +30,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash tests/e2e/run.sh target/debug/bvm
+
+  # The released Linux binaries are static musl builds; they must still pick
+  # glibc Bun on glibc systems (0.1.0 picked the musl Bun and failed to run it).
+  linux-static:
+    name: ubuntu-latest (static musl build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup target add x86_64-unknown-linux-musl
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+      - run: cargo install cargo-zigbuild --locked
+      # Debug, so the suite's tamper checks run; the libc question is the same.
+      - run: cargo zigbuild --locked --target x86_64-unknown-linux-musl
+      - name: End-to-end
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash tests/e2e/run.sh target/x86_64-unknown-linux-musl/debug/bvm

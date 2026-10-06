@@ -162,15 +162,50 @@ pub fn remote_versions(channel: Channel) -> Result<Vec<Version>> {
     Ok(versions)
 }
 
+/// The tag of a repository's latest release, from GitHub's `releases/latest`
+/// redirect: no API call, so no rate limit.
+pub fn latest_tag(repository: &str) -> Result<String> {
+    let url = format!("https://github.com/{repository}/releases/latest");
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(60)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .user_agent(concat!("bvm/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .into();
+    let response = agent
+        .get(&url)
+        .call()
+        .with_context(|| format!("GET {url}"))?;
+    response
+        .headers()
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|location| location.split_once("/releases/tag/"))
+        .map(|(_, tag)| tag.to_string())
+        .filter(|tag| !tag.is_empty())
+        .ok_or_else(|| anyhow!("{repository} has no published release"))
+}
+
+/// The newest stable version on a channel.
+fn latest_version(channel: Channel) -> Result<Version> {
+    let tag = latest_tag(channel.repository())?;
+    let version = Version::parse(&tag)
+        .with_context(|| format!("{}'s latest release {tag}", channel.repository()))?;
+    if version.channel() != channel {
+        bail!(
+            "{}'s latest release {tag} is not on that channel",
+            channel.repository()
+        );
+    }
+    Ok(version)
+}
+
 /// `latest`, `absolute`, or an exact version.
 pub fn resolve_request(request: &str) -> Result<Version> {
     match request {
-        "latest" => remote_versions(Channel::Official)?
-            .pop()
-            .ok_or_else(|| anyhow!("no official Bun releases found")),
-        "absolute" | "absolute-latest" => remote_versions(Channel::Absolute)?
-            .pop()
-            .ok_or_else(|| anyhow!("no AbsoluteJS builds found")),
+        "latest" => latest_version(Channel::Official),
+        "absolute" | "absolute-latest" => latest_version(Channel::Absolute),
         exact => Version::parse(exact),
     }
 }

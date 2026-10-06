@@ -64,21 +64,13 @@ openssl pkey -in "$KEY" -pubout | openssl pkeyutl -verify -pubin -inkey /dev/std
   -in "$work/SHASUMS256.txt" -sigfile "$work/sig.bin" >/dev/null || die "signature did not verify"
 base64 -w0 "$work/sig.bin" > "$work/SHASUMS256.txt.sig" && echo >> "$work/SHASUMS256.txt.sig"
 
-notes="$work/notes.md"
-{
-  echo "bvm $VERSION"
-  echo
-  echo "Every binary is listed in \`SHASUMS256.txt\`, signed with the AbsoluteJS release key (\`SHASUMS256.txt.sig\`, Ed25519)."
-  echo "\`bvm self update\` and the install scripts check that signature before running anything."
-} > "$notes"
-gh release upload "$TAG" -R "$REPO" --clobber "$work/SHASUMS256.txt" "$work/SHASUMS256.txt.sig"
-gh release edit "$TAG" -R "$REPO" --draft=false --latest --notes-file "$notes"
-echo "release: published https://github.com/$REPO/releases/tag/$TAG"
-
 # npm: one package per platform holding exactly the binary just signed, then
 # @absolutejs/bvm, whose launcher runs whichever one npm installed.
 npm_dir="$work/npm"
 optional=""
+npm_names=""
+# Whether the registry serves this exact version (so a rerun skips it).
+published() { [ "$(npm view "$1@$VERSION" version 2>/dev/null)" = "$VERSION" ]; }
 for asset in $EXPECTED; do
   stem=${asset%.exe}; platform=${stem#bvm-}; os=${platform%-*}; cpu=${platform#*-}
   npm_os=$os; [ "$os" = windows ] && npm_os=win32
@@ -100,8 +92,9 @@ for asset in $EXPECTED; do
   "files": ["bin"]
 }
 JSON
-  (cd "$dir" && npm publish --access public)
+  published "$name" || (cd "$dir" && npm publish --access public)
   optional="$optional\"$name\": \"$VERSION\","
+  npm_names="$npm_names $name"
 done
 cp -R npm/bvm "$npm_dir/bvm"
 cp README.md LICENSE "$npm_dir/bvm/"
@@ -114,5 +107,28 @@ pkg.optionalDependencies = JSON.parse("{" + process.argv[3].replace(/,$/, "") + 
 pkg.files = ["bin", "README.md", "LICENSE"];
 fs.writeFileSync(file, JSON.stringify(pkg, null, "\t") + "\n");
 ' "$npm_dir/bvm/package.json" "$VERSION" "$optional"
-(cd "$npm_dir/bvm" && npm publish --access public)
-echo "release: published @absolutejs/bvm@$VERSION and its six platform packages"
+published @absolutejs/bvm || (cd "$npm_dir/bvm" && npm publish --access public)
+
+# Publishing the GitHub release starts install-check, which installs from npm:
+# wait until the registry serves all seven packages (new versions can take
+# several minutes to appear).
+for _ in $(seq 1 90); do
+  missing=""
+  for name in $npm_names @absolutejs/bvm; do published "$name" || missing="$missing $name"; done
+  [ -z "$missing" ] && break
+  sleep 20
+done
+[ -z "$missing" ] || die "npm is not serving$missing@$VERSION yet; rerun this script once it is"
+echo "release: npm serves @absolutejs/bvm@$VERSION and its six platform packages"
+
+notes="$work/notes.md"
+{
+  echo "bvm $VERSION"
+  echo
+  echo "Every binary is listed in \`SHASUMS256.txt\`, signed with the AbsoluteJS release key (\`SHASUMS256.txt.sig\`, Ed25519)."
+  echo "\`bvm self update\` and the install scripts check that signature before running anything."
+} > "$notes"
+gh release upload "$TAG" -R "$REPO" --clobber "$work/SHASUMS256.txt" "$work/SHASUMS256.txt.sig"
+gh release edit "$TAG" -R "$REPO" --draft=false --latest --notes-file "$notes"
+echo "release: published https://github.com/$REPO/releases/tag/$TAG"
+

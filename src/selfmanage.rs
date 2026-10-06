@@ -1,11 +1,11 @@
 //! bvm's own binary: placing it as `bvm`/`bun`/`bunx`, and replacing it with a
 //! newer signed release (`bvm self update`).
 
-use crate::channel::{get_bytes, get_text};
+use crate::channel::{get_bytes, get_text, latest_tag};
 use crate::paths;
 use crate::platform::exe_suffix;
 use crate::verify::{absolute_checksums, check_download};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -70,35 +70,11 @@ pub fn place_shims(source: &Path) -> Result<PathBuf> {
     Ok(bin)
 }
 
-/// The newest release tag, from GitHub's `releases/latest` redirect (no API
-/// call, so no rate limit).
-fn latest_tag() -> Result<String> {
-    let url = format!("https://github.com/{REPOSITORY}/releases/latest");
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .max_redirects(0)
-        .http_status_as_error(false)
-        .user_agent(concat!("bvm/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into();
-    let response = agent
-        .get(&url)
-        .call()
-        .with_context(|| format!("GET {url}"))?;
-    let location = response
-        .headers()
-        .get("location")
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| anyhow!("no bvm release is published yet"))?;
-    location
-        .split_once("/tag/")
-        .map(|(_, tag)| tag)
-        .filter(|tag| tag.starts_with('v'))
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("no bvm release is published yet"))
-}
-
 pub fn update() -> Result<()> {
-    let tag = latest_tag()?;
+    let tag = latest_tag(REPOSITORY)?;
+    if !tag.starts_with('v') {
+        bail!("bvm's latest release tag {tag} is not a version");
+    }
     let latest = semver::Version::parse(tag.trim_start_matches('v'))?;
     let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))?;
     if latest <= current {

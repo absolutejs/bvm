@@ -21,6 +21,9 @@ pass "official Bun 1.4.2 installs after Bun's PGP signature verifies"
 [ "$("$("$BVM" which 1.4.2-absolute.1)" --version)" = "1.4.2" ] || fail "AbsoluteJS build did not install"
 pass "the AbsoluteJS build installs after its Ed25519 signature verifies"
 
+env -u GITHUB_TOKEN "$BVM" install latest || fail "install latest without GITHUB_TOKEN"
+pass "latest resolves without the GitHub API (no token, no rate limit)"
+
 "$BVM" setup >/dev/null
 export PATH="$BVM_DIR/bin:$PATH"
 [ -x "$BVM_DIR/bin/bun$EXE" ] || fail "no bun shim"

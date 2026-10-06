@@ -27,16 +27,17 @@ fn arch() -> Result<&'static str> {
     })
 }
 
-/// Alpine and other musl systems need the musl build.
+/// Alpine and other musl systems need the musl build. Decided by the host's
+/// dynamic loader, never by how bvm itself was built: bvm's Linux binaries are
+/// static musl builds that also run on glibc systems.
 fn is_musl() -> bool {
-    cfg!(target_env = "musl")
-        || std::fs::read_dir("/lib")
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .any(|entry| entry.file_name().to_string_lossy().starts_with("ld-musl-"))
-            })
-            .unwrap_or(false)
+    std::fs::read_dir("/lib")
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("ld-musl-"))
+        })
+        .unwrap_or(false)
 }
 
 /// Bun's default x64 build needs AVX2; older CPUs need `-baseline`.
