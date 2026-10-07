@@ -242,7 +242,16 @@ fn remove_root(root: &Path) -> Result<()> {
     if fs::remove_dir_all(root).is_ok() || !root.exists() {
         return Ok(());
     }
-    #[cfg(windows)]
+    remove_running(root)
+}
+
+#[cfg(not(windows))]
+fn remove_running(root: &Path) -> Result<()> {
+    fs::remove_dir_all(root).with_context(|| format!("removing {}", root.display()))
+}
+
+#[cfg(windows)]
+fn remove_running(root: &Path) -> Result<()> {
     {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -272,10 +281,8 @@ fn remove_root(root: &Path) -> Result<()> {
         ))
         .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
         .spawn();
-        return Ok(());
     }
-    #[cfg(not(windows))]
-    fs::remove_dir_all(root).with_context(|| format!("removing {}", root.display()))
+    Ok(())
 }
 
 /// Another `bun` that comes before `dir` on this PATH, outside bvm.
