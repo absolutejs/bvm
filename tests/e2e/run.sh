@@ -7,6 +7,7 @@ BVM="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 WORK="$(mktemp -d)"
 export BVM_DIR="$WORK/bvm"
 export HOME="$WORK/home" USERPROFILE="$WORK/home"
+unset BUN_INSTALL
 mkdir -p "$HOME"
 touch "$HOME/.bashrc"
 EXE=""; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=".exe" ;; esac
@@ -82,5 +83,31 @@ if [ "$code" = "0" ]; then fail "a tampered checksum list was accepted"; fi
 case "$out" in *"not signed by Bun's release key"*) ;; *) fail "unexpected refusal: $out" ;; esac
 [ ! -e "$BVM_DIR/versions/1.4.1" ] || fail "something was installed from a tampered list"
 pass "a tampered checksum list is refused and nothing is installed"
+
+set +e; out=$("$BVM" uninstall 1.4.2 2>&1); code=$?; set -e
+[ "$code" != "0" ] || fail "removed the default version without --force"
+case "$out" in *"is the default"*) ;; *) fail "unclear refusal to remove the default: $out" ;; esac
+pass "bvm uninstall refuses to remove the default without --force"
+
+# Removing bvm itself, run as the installed copy (on Windows that copy is the
+# running program, which cannot simply be deleted).
+INSTALLED="$BVM_DIR/bin/bvm$EXE"
+set +e; out=$("$INSTALLED" self uninstall --keep 1.4.2 2>&1 </dev/null); code=$?; set -e
+[ "$code" != "0" ] || fail "self uninstall went ahead without a terminal or --yes"
+[ -d "$BVM_DIR/versions" ] || fail "a refused self uninstall changed something"
+pass "self uninstall needs --yes when there is no terminal to ask"
+
+# Without any other Bun on PATH (a developer's own would be kept instead).
+CLEAN_PATH="$PATH"; [ -n "$EXE" ] || CLEAN_PATH="$BVM_DIR/bin:/usr/bin:/bin"
+PATH="$CLEAN_PATH" "$INSTALLED" self uninstall --keep 1.4.2 --yes </dev/null
+[ ! -e "$BVM_DIR" ] || fail "$BVM_DIR is still there"
+[ "$("$HOME/.bun/bin/bun$EXE" --version)" = "1.4.2" ] || fail "the kept Bun does not run from ~/.bun/bin"
+[ -e "$HOME/.bun/bin/bunx$EXE" ] || fail "no bunx beside the kept Bun"
+if [ -z "$EXE" ]; then
+  if grep -q "bvm (Bun version manager)" "$HOME/.bashrc"; then fail "bvm's lines are still in .bashrc"; fi
+  grep -q 'BUN_INSTALL' "$HOME/.bashrc" || fail "Bun is not on PATH in .bashrc"
+  [ "$(env -u BVM_DIR PATH=/usr/bin:/bin bash -c ". \"$HOME/.bashrc\"; bun --version")" = "1.4.2" ] || fail "a new shell does not find the kept Bun"
+fi
+pass "self uninstall removes bvm and leaves the chosen Bun where Bun's installer puts it"
 
 echo "all end-to-end checks passed"

@@ -60,12 +60,84 @@ fn append_once(file: &Path, line: &str) -> Result<bool> {
     Ok(true)
 }
 
+/// Takes out what `append_once` added (the marker, its line, and the blank
+/// line before it), leaving the rest of the file as it was. A file left empty
+/// that bvm created is removed.
+pub fn remove_block(file: &Path) -> Result<bool> {
+    let Ok(existing) = fs::read_to_string(file) else {
+        return Ok(false);
+    };
+    if !existing.contains(MARKER) {
+        return Ok(false);
+    }
+    let lines: Vec<&str> = existing.split('\n').collect();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if lines[index] == MARKER {
+            if kept.last() == Some(&"") {
+                kept.pop();
+            }
+            index += 2;
+            continue;
+        }
+        kept.push(lines[index]);
+        index += 1;
+    }
+    let mut text = kept.join("\n");
+    if existing.ends_with('\n') && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if text.trim().is_empty() {
+        fs::remove_file(file)?;
+    } else {
+        fs::write(file, text)?;
+    }
+    Ok(true)
+}
+
+/// Every file `setup` may have written to that still holds bvm's block.
+pub fn files_with_block() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    #[cfg(unix)]
+    {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+        for name in [".bashrc", ".zshrc", ".bash_profile", ".profile"] {
+            candidates.push(home.join(name));
+        }
+        candidates.push(home.join(".config/fish/conf.d/bvm.fish"));
+    }
+    #[cfg(windows)]
+    candidates.extend(powershell_profiles());
+    candidates
+        .into_iter()
+        .filter(|file| {
+            fs::read_to_string(file)
+                .map(|text| text.contains(MARKER))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+/// The user's shell, by name (`bash`, `zsh`, `fish`), or empty.
+#[cfg(unix)]
+pub fn shell_name() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .and_then(|path| {
+            Path::new(&path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default()
+}
+
 /// The shell startup files to set up: the user's own shell's file (created if
 /// missing: a fresh macOS account has no `.zshrc`), plus any other bash or zsh
 /// file that already exists. macOS terminals start login shells, which read
 /// `.bash_profile` rather than `.bashrc`.
 #[cfg(unix)]
-fn posix_startup_files(home: &Path, shell: &str) -> Vec<PathBuf> {
+pub fn posix_startup_files(home: &Path, shell: &str) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut add = |name: &str, create: bool| {
         let file = home.join(name);
@@ -91,14 +163,7 @@ pub fn setup() -> Result<Vec<PathBuf>> {
     #[cfg(unix)]
     {
         let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-        let shell = std::env::var("SHELL")
-            .ok()
-            .and_then(|path| {
-                Path::new(&path)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
-            .unwrap_or_default();
+        let shell = shell_name();
         let eval = format!(r#"eval "$("{}" env)""#, bvm.display());
         for file in posix_startup_files(&home, &shell) {
             if append_once(&file, &eval)? {
@@ -117,18 +182,7 @@ pub fn setup() -> Result<Vec<PathBuf>> {
     }
     #[cfg(windows)]
     {
-        use winreg::RegKey;
-        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
-        let environment = RegKey::predef(HKEY_CURRENT_USER)
-            .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)?;
-        let current: String = environment.get_value("Path").unwrap_or_default();
-        let bin = paths::bin_dir()?.display().to_string();
-        if !current
-            .split(';')
-            .any(|entry| entry.eq_ignore_ascii_case(&bin))
-        {
-            environment.set_value("Path", &format!("{bin};{current}"))?;
-            announce_environment_change();
+        if add_to_user_path(&paths::bin_dir()?)? {
             changed.push(PathBuf::from(r"HKCU\Environment\Path"));
         }
         let line = format!(
@@ -144,11 +198,66 @@ pub fn setup() -> Result<Vec<PathBuf>> {
     Ok(changed)
 }
 
+#[cfg(windows)]
+fn user_environment() -> Result<winreg::RegKey> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+    Ok(RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)?)
+}
+
+/// True when `dir` is on the user PATH (`HKCU\Environment\Path`).
+#[cfg(windows)]
+pub fn on_user_path(dir: &Path) -> Result<bool> {
+    let current: String = user_environment()?.get_value("Path").unwrap_or_default();
+    let dir = dir.display().to_string();
+    Ok(current
+        .split(';')
+        .any(|entry| entry.trim_end_matches('\\').eq_ignore_ascii_case(&dir)))
+}
+
+/// Puts `dir` first on the user PATH; false when it was already there.
+#[cfg(windows)]
+pub fn add_to_user_path(dir: &Path) -> Result<bool> {
+    if on_user_path(dir)? {
+        return Ok(false);
+    }
+    let environment = user_environment()?;
+    let current: String = environment.get_value("Path").unwrap_or_default();
+    let dir = dir.display().to_string();
+    let value = if current.is_empty() {
+        dir
+    } else {
+        format!("{dir};{current}")
+    };
+    environment.set_value("Path", &value)?;
+    announce_environment_change();
+    Ok(true)
+}
+
+/// Takes `dir` off the user PATH; false when it was not there.
+#[cfg(windows)]
+pub fn remove_from_user_path(dir: &Path) -> Result<bool> {
+    if !on_user_path(dir)? {
+        return Ok(false);
+    }
+    let environment = user_environment()?;
+    let current: String = environment.get_value("Path").unwrap_or_default();
+    let dir = dir.display().to_string();
+    let kept: Vec<&str> = current
+        .split(';')
+        .filter(|entry| !entry.trim_end_matches('\\').eq_ignore_ascii_case(&dir))
+        .collect();
+    environment.set_value("Path", &kept.join(";"))?;
+    announce_environment_change();
+    Ok(true)
+}
+
 /// The PowerShell profiles to set up: the one the installer reports
 /// (`$PROFILE`, which follows a OneDrive-redirected Documents folder), else
 /// the default locations for PowerShell 7 and Windows PowerShell 5.1.
 #[cfg(windows)]
-fn powershell_profiles() -> Vec<PathBuf> {
+pub fn powershell_profiles() -> Vec<PathBuf> {
     if let Some(profile) = std::env::var_os("BVM_POWERSHELL_PROFILE") {
         return vec![PathBuf::from(profile)];
     }
@@ -211,6 +320,31 @@ end
 "#,
         root = root.display()
     ))
+}
+
+#[cfg(test)]
+mod block_tests {
+    use super::{append_once, remove_block};
+    use std::fs;
+
+    #[test]
+    fn removing_the_block_restores_the_file() {
+        let dir = std::env::temp_dir().join(format!("bvm-block-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(".bashrc");
+        let original = "alias ll='ls -l'\nexport EDITOR=vim\n";
+        fs::write(&file, original).unwrap();
+        assert!(append_once(&file, "eval \"$(bvm env)\"").unwrap());
+        assert!(remove_block(&file).unwrap());
+        assert_eq!(fs::read_to_string(&file).unwrap(), original);
+        assert!(!remove_block(&file).unwrap());
+        // A file that only ever held bvm's block goes away.
+        let created = dir.join("bvm.fish");
+        append_once(&created, "bvm env --shell fish | source").unwrap();
+        remove_block(&created).unwrap();
+        assert!(!created.exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[cfg(all(test, unix))]

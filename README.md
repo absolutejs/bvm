@@ -53,4 +53,19 @@ installed, bvm installs that same version, verified, as your default, so `bun`
 keeps meaning what it meant. Output is colored on a terminal; set `NO_COLOR`
 to turn it off.
 
+## Uninstall
+
+```sh
+bvm uninstall 1.3.9      # remove one Bun version
+bvm self uninstall       # remove bvm itself
+```
+
+`bvm self uninstall` keeps one Bun, where Bun's own installer puts it
+(`~/.bun/bin`), so `bun` and `bun upgrade` keep working. On a terminal you pick
+it with the arrow keys (your default is preselected) and confirm the plan;
+in scripts, pass `--keep <version>`, `--keep-default` or `--remove-bun`, plus
+`--yes`. It removes everything bvm added to your shell startup files (and,
+on Windows, your user PATH and PowerShell profile) and leaves the rest of
+those files as they were.
+
 MIT licensed.

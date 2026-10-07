@@ -12,6 +12,7 @@ mod run;
 mod selfmanage;
 mod setup;
 mod ui;
+mod uninstall;
 mod verify;
 
 use anyhow::{Context, Result, anyhow};
@@ -56,8 +57,13 @@ enum Command {
         #[arg(long)]
         default: bool,
     },
-    /// Remove an installed version.
-    Uninstall { version: String },
+    /// Remove an installed version (`bvm self uninstall` removes bvm itself).
+    Uninstall {
+        version: String,
+        /// Remove it even if it is the default.
+        #[arg(long)]
+        force: bool,
+    },
     /// Use a version in this shell (needs the shell function from `bvm setup`).
     Use {
         version: String,
@@ -105,6 +111,21 @@ enum Command {
 enum SelfAction {
     /// Replace bvm with the latest signed release.
     Update,
+    /// Remove bvm, keeping one Bun where Bun's own installer puts it.
+    Uninstall {
+        /// Keep this version (instead of choosing with the arrow keys).
+        #[arg(long, value_name = "VERSION", conflicts_with_all = ["keep_default", "remove_bun"])]
+        keep: Option<String>,
+        /// Keep the default version without asking.
+        #[arg(long, conflicts_with = "remove_bun")]
+        keep_default: bool,
+        /// Remove Bun too.
+        #[arg(long)]
+        remove_bun: bool,
+        /// Do not ask for confirmation (required when not on a terminal).
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 fn installed_version(text: &str) -> Result<Version> {
@@ -207,7 +228,38 @@ fn run_cli() -> Result<i32> {
                 ));
             }
         }
-        Command::Uninstall { version } => install::uninstall(&Version::parse(&version)?)?,
+        Command::Uninstall { version, force } => {
+            let version = Version::parse(&version)?;
+            let is_default = resolve::default_version().ok().flatten().as_ref() == Some(&version);
+            if is_default && !force {
+                let others: Vec<String> = install::installed()?
+                    .into_iter()
+                    .filter(|other| other != &version)
+                    .map(|other| other.to_string())
+                    .collect();
+                let hint = match others.last() {
+                    Some(other) => format!("`bvm default {other}` first, or "),
+                    None => String::new(),
+                };
+                return Err(anyhow!(
+                    "Bun {version} is the default, so `bun` would stop working outside projects that pin a version; run {hint}`bvm uninstall {version} --force`"
+                ));
+            }
+            install::uninstall(&version)?;
+            if is_default {
+                let _ = fs::remove_file(paths::default_file()?);
+                ui::warn("there is no default Bun now; `bvm default <version>` sets one");
+            }
+            if let Ok(resolved) = resolve::resolve(&std::env::current_dir()?)
+                && resolved.version == version
+                && resolved.source != "default"
+            {
+                ui::note(format!(
+                    "{} pins it here, so the next `bun` reinstalls it",
+                    resolved.source
+                ));
+            }
+        }
         Command::Use {
             version,
             print_env,
@@ -360,6 +412,20 @@ fn run_cli() -> Result<i32> {
         Command::Bvm {
             action: SelfAction::Update,
         } => selfmanage::update()?,
+        Command::Bvm {
+            action:
+                SelfAction::Uninstall {
+                    keep,
+                    keep_default,
+                    remove_bun,
+                    yes,
+                },
+        } => uninstall::run(uninstall::Options {
+            keep,
+            keep_default,
+            remove_bun,
+            yes,
+        })?,
     }
     Ok(0)
 }
