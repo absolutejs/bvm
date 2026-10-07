@@ -33,8 +33,19 @@ try {
   if (Test-Path $target) { Rename-Item $target ("bvm.exe.old-" + [DateTimeOffset]::Now.ToUnixTimeMilliseconds()) }
   Move-Item (Join-Path $work $asset) $target
   $env:BVM_DIR = $bvmDir
+  # The profile this PowerShell actually loads: it follows a OneDrive-redirected
+  # Documents folder and differs between PowerShell 7 and Windows PowerShell 5.1.
+  $env:BVM_POWERSHELL_PROFILE = $PROFILE.CurrentUserCurrentHost
   & $target setup
-  Write-Host 'bvm: done. Open a new terminal, then: bvm install latest --default'
+  Remove-Item Env:\BVM_POWERSHELL_PROFILE -ErrorAction SilentlyContinue
+  # `irm ... | iex` runs in this session, so bvm can be live here right away:
+  # PATH (new windows read it from the user environment) and the `bvm use`
+  # function.
+  if (-not ($env:Path -split ';' -contains $bin)) { $env:Path = "$bin;$env:Path" }
+  Invoke-Expression (& $target env --shell powershell | Out-String)
+  Write-Host ''
+  Write-Host "bvm: installed $(& $target --version) to $bvmDir. It works in this window and new ones."
+  Write-Host '  Next: bvm install latest --default'
 }
 finally {
   Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue

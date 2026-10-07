@@ -1,6 +1,6 @@
 [package]
 name = "bvm"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -17,4 +17,5 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
 winreg = "0.56.0"

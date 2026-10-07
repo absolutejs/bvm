@@ -59,23 +59,53 @@ fn append_once(file: &Path, line: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// Adds `eval "$(bvm env)"` to the user's shell startup files (bash, zsh) and
-/// the fish equivalent; on Windows, the PowerShell profile and the user PATH.
+/// The shell startup files to set up: the user's own shell's file (created if
+/// missing: a fresh macOS account has no `.zshrc`), plus any other bash or zsh
+/// file that already exists. macOS terminals start login shells, which read
+/// `.bash_profile` rather than `.bashrc`.
+#[cfg(unix)]
+fn posix_startup_files(home: &Path, shell: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut add = |name: &str, create: bool| {
+        let file = home.join(name);
+        if (create || file.exists()) && !files.contains(&file) {
+            files.push(file);
+        }
+    };
+    add(".bashrc", shell == "bash" || shell.is_empty());
+    add(".zshrc", shell == "zsh");
+    add(
+        ".bash_profile",
+        shell == "bash" && cfg!(target_os = "macos"),
+    );
+    files
+}
+
+/// Puts bvm on PATH for new shells: the user's shell startup files on Unix;
+/// on Windows, the user PATH (announced to running programs, as rustup does)
+/// and the PowerShell profile.
 pub fn setup() -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
     let bvm = paths::bin_dir()?.join(format!("bvm{}", crate::platform::exe_suffix()));
     #[cfg(unix)]
     {
         let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+        let shell = std::env::var("SHELL")
+            .ok()
+            .and_then(|path| {
+                Path::new(&path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .unwrap_or_default();
         let eval = format!(r#"eval "$("{}" env)""#, bvm.display());
-        for rc in [".bashrc", ".zshrc"] {
-            let file = home.join(rc);
-            if (file.exists() || rc == ".bashrc") && append_once(&file, &eval)? {
+        for file in posix_startup_files(&home, &shell) {
+            if append_once(&file, &eval)? {
                 changed.push(file);
             }
         }
         let fish = home.join(".config/fish/conf.d/bvm.fish");
-        if home.join(".config/fish").exists()
+        if (shell == "fish" || home.join(".config/fish").exists())
             && append_once(
                 &fish,
                 &format!("\"{}\" env --shell fish | source", bvm.display()),
@@ -97,21 +127,63 @@ pub fn setup() -> Result<Vec<PathBuf>> {
             .any(|entry| entry.eq_ignore_ascii_case(&bin))
         {
             environment.set_value("Path", &format!("{bin};{current}"))?;
+            announce_environment_change();
             changed.push(PathBuf::from(r"HKCU\Environment\Path"));
         }
-        if let Some(profile) = std::env::var_os("USERPROFILE") {
-            let file = PathBuf::from(profile)
-                .join(r"Documents\PowerShell\Microsoft.PowerShell_profile.ps1");
-            let line = format!(
-                r#"Invoke-Expression (& "{}" env --shell powershell | Out-String)"#,
-                bvm.display()
-            );
+        let line = format!(
+            r#"Invoke-Expression (& "{}" env --shell powershell | Out-String)"#,
+            bvm.display()
+        );
+        for file in powershell_profiles() {
             if append_once(&file, &line)? {
                 changed.push(file);
             }
         }
     }
     Ok(changed)
+}
+
+/// The PowerShell profiles to set up: the one the installer reports
+/// (`$PROFILE`, which follows a OneDrive-redirected Documents folder), else
+/// the default locations for PowerShell 7 and Windows PowerShell 5.1.
+#[cfg(windows)]
+fn powershell_profiles() -> Vec<PathBuf> {
+    if let Some(profile) = std::env::var_os("BVM_POWERSHELL_PROFILE") {
+        return vec![PathBuf::from(profile)];
+    }
+    std::env::var_os("USERPROFILE")
+        .map(|home| {
+            let documents = PathBuf::from(home).join("Documents");
+            vec![
+                documents.join(r"PowerShell\Microsoft.PowerShell_profile.ps1"),
+                documents.join(r"WindowsPowerShell\Microsoft.PowerShell_profile.ps1"),
+            ]
+        })
+        .unwrap_or_default()
+}
+
+/// Tells running programs (Explorer, and the terminals it starts) that the
+/// user environment changed, so new windows see the new PATH without a sign
+/// out.
+#[cfg(windows)]
+fn announce_environment_change() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+    };
+    let area: Vec<u16> = "Environment\0".encode_utf16().collect();
+    let mut result = 0usize;
+    // SAFETY: a broadcast with a NUL-terminated string that outlives the call.
+    unsafe {
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            area.as_ptr() as isize,
+            SMTO_ABORTIFHUNG,
+            5000,
+            &mut result,
+        );
+    }
 }
 
 /// Shell assignment for `bvm use`.
@@ -138,4 +210,35 @@ end
 "#,
         root = root.display()
     ))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::posix_startup_files;
+    use std::fs;
+
+    fn names(files: Vec<std::path::PathBuf>) -> Vec<String> {
+        files
+            .iter()
+            .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn sets_up_the_users_own_shell_even_without_a_startup_file() {
+        let home = std::env::temp_dir().join(format!("bvm-setup-{}", std::process::id()));
+        fs::create_dir_all(&home).unwrap();
+        // A fresh macOS account: zsh, no .zshrc yet.
+        assert_eq!(names(posix_startup_files(&home, "zsh")), vec![".zshrc"]);
+        let bash = names(posix_startup_files(&home, "bash"));
+        assert!(bash.contains(&".bashrc".to_string()));
+        assert_eq!(
+            bash.contains(&".bash_profile".to_string()),
+            cfg!(target_os = "macos")
+        );
+        // An existing startup file of another shell is kept up to date too.
+        fs::write(home.join(".zshrc"), "").unwrap();
+        assert!(names(posix_startup_files(&home, "bash")).contains(&".zshrc".to_string()));
+        fs::remove_dir_all(&home).unwrap();
+    }
 }

@@ -24,17 +24,32 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      # Each install step proves bvm works in the SAME shell that ran the
+      # installer, then in a brand-new shell, without anyone editing PATH.
       - name: Install with install.sh
         if: runner.os != 'Windows'
         run: |
           touch "$HOME/.bashrc"
-          curl -fsSL https://raw.githubusercontent.com/absolutejs/bvm/main/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/absolutejs/bvm/main/install.sh | sh | tee install.log
+          if [ "$RUNNER_OS" = Linux ]; then
+            # ~/.local/bin is on this runner's PATH: the installer must link bvm there.
+            command -v bvm
+          else
+            # No PATH directory to link into: the printed line must activate it.
+            eval "$(sed -n 's/^    \(eval .*\)$/\1/p' install.log)"
+          fi
+          bvm -v
+          "$SHELL" -ic 'bvm -v'
           echo "$HOME/.bvm/bin" >> "$GITHUB_PATH"
       - name: Install with install.ps1
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           irm https://raw.githubusercontent.com/absolutejs/bvm/main/install.ps1 | iex
+          # irm | iex runs in this session: bvm must work here at once...
+          bvm -v
+          # ...and a new PowerShell must find it through its profile.
+          pwsh -Command 'bvm -v'
           Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.bvm\bin"
       - name: Use it
         shell: bash

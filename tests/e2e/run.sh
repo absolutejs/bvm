@@ -13,6 +13,12 @@ EXE=""; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=".exe" ;; esac
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
+expected="bvm $(sed -n 's/^version = "\(.*\)"/\1/p' "$(dirname "$0")/../../Cargo.toml" | head -1)"
+for flag in -v -V --version; do
+  [ "$("$BVM" "$flag")" = "$expected" ] || fail "bvm $flag does not print the version"
+done
+pass "bvm -v, -V and --version print the version"
+
 "$BVM" install 1.4.2 --default
 [ "$("$("$BVM" which 1.4.2)" --version)" = "1.4.2" ] || fail "official 1.4.2 did not install"
 pass "official Bun 1.4.2 installs after Bun's PGP signature verifies"

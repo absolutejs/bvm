@@ -62,4 +62,38 @@ mkdir -p "$BVM_DIR/bin"
 chmod +x "$work/$asset"
 mv "$work/$asset" "$BVM_DIR/bin/bvm"
 BVM_DIR="$BVM_DIR" "$BVM_DIR/bin/bvm" setup
-echo "bvm install: done. Open a new terminal, then: bvm install latest --default"
+
+# A script cannot change the PATH of the shell that ran it, so `bvm` would
+# only exist in new terminals. When a directory already on this shell's PATH
+# is ours to write (~/.local/bin on most Linux setups), link bvm into it so it
+# works right away.
+linked=""
+for dir in "$HOME/.local/bin" "$HOME/bin"; do
+  case ":$PATH:" in
+    *":$dir:"*)
+      if [ -d "$dir" ] && [ -w "$dir" ]; then
+        ln -sf "$BVM_DIR/bin/bvm" "$dir/bvm"
+        linked="$dir/bvm"
+        break
+      fi
+      ;;
+  esac
+done
+
+case "$(basename "${SHELL:-sh}")" in
+  fish) activate="\"$BVM_DIR/bin/bvm\" env --shell fish | source" ;;
+  *) activate="eval \"\$(\"$BVM_DIR/bin/bvm\" env)\"" ;;
+esac
+
+echo
+echo "bvm install: installed bvm $("$BVM_DIR/bin/bvm" --version | cut -d' ' -f2) to $BVM_DIR"
+if [ -n "$linked" ]; then
+  echo "  bvm works in this terminal now (linked at $linked)."
+  echo "  New terminals also switch bun and bunx per project. To get that here too, run:"
+else
+  echo "  New terminals are set up. To use bvm in this terminal now, run:"
+fi
+echo
+echo "    $activate"
+echo
+echo "  Then: bvm install latest --default"

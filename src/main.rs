@@ -23,9 +23,13 @@ use std::path::Path;
 #[command(
     name = "bvm",
     version,
-    about = "Install, switch and verify Bun versions"
+    about = "Install, switch and verify Bun versions",
+    disable_version_flag = true
 )]
 struct Cli {
+    /// Print the version (`-v`, `-V` or `--version`, as `bun -v` does).
+    #[arg(short = 'v', long, short_alias = 'V', action = clap::ArgAction::Version)]
+    version: Option<bool>,
     #[command(subcommand)]
     command: Command,
 }
@@ -243,7 +247,18 @@ fn run_cli() -> Result<i32> {
             for file in &changed {
                 eprintln!("bvm: updated {}", file.display());
             }
-            eprintln!("bvm: open a new terminal (or run `eval \"$(bvm env)\"`) to start using it");
+            let bvm = paths::bin_dir()?.join(format!("bvm{}", platform::exe_suffix()));
+            if cfg!(windows) {
+                eprintln!(
+                    "bvm: new terminals are set up; for this one run: Invoke-Expression (& \"{}\" env --shell powershell | Out-String)",
+                    bvm.display()
+                );
+            } else {
+                eprintln!(
+                    "bvm: new terminals are set up; for this one run: eval \"$(\"{}\" env)\"",
+                    bvm.display()
+                );
+            }
         }
         Command::Bvm {
             action: SelfAction::Update,
