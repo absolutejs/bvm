@@ -90,7 +90,7 @@ pub fn resolve(cwd: &Path) -> Result<Resolved> {
             source: "default".into(),
         }),
         None => {
-            bail!("no Bun version selected; run `bvm install latest` then `bvm default latest`")
+            bail!("no Bun version selected here and no default; run `bvm install latest --default`")
         }
     }
 }
