@@ -111,10 +111,17 @@ published @absolutejs/bvm || (cd "$npm_dir/bvm" && npm publish --access public)
 
 # Publishing the GitHub release starts install-check, which installs from npm:
 # wait until the registry serves all seven packages (new versions can take
-# several minutes to appear).
+# several minutes to appear). The version shows in the metadata before its
+# tarball downloads (npm install then 404s), so wait for the tarball too.
+tarball_served() {
+  url=$(npm view "$1@$VERSION" dist.tarball 2>/dev/null)
+  [ -n "$url" ] && curl -fsI "$url" >/dev/null 2>&1
+}
 for _ in $(seq 1 90); do
   missing=""
-  for name in $npm_names @absolutejs/bvm; do published "$name" || missing="$missing $name"; done
+  for name in $npm_names @absolutejs/bvm; do
+    { published "$name" && tarball_served "$name"; } || missing="$missing $name"
+  done
   [ -z "$missing" ] && break
   sleep 20
 done
