@@ -83,13 +83,15 @@ env "$tone=1" BVM_FROM_INSTALLER=1 BVM_DIR="$BVM_DIR" "$BVM_DIR/bin/bvm" setup 2
 
 # A script cannot change the PATH of the shell that ran it, so `bvm` would
 # only exist in new terminals. When a directory already on this shell's PATH
-# is ours to write (~/.local/bin on most Linux setups), link bvm into it so it
-# works right away.
+# is ours to write (~/.local/bin on most Linux setups, even before it exists),
+# link bvm into it so it works right away.
 linked=""
 for dir in "$HOME/.local/bin" "$HOME/bin"; do
   case ":$PATH:" in
     *":$dir:"*)
-      if [ -d "$dir" ] && [ -w "$dir" ]; then
+      # On PATH but not created yet (a fresh account): ours to create.
+      [ -d "$dir" ] || mkdir -p "$dir" 2>/dev/null || continue
+      if [ -w "$dir" ]; then
         ln -sf "$BVM_DIR/bin/bvm" "$dir/bvm"
         linked="$dir/bvm"
         ok "Linked bvm into $bold$(echo "$dir" | sed "s|^$HOME|~|")$reset so it works in this terminal"
