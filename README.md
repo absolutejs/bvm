@@ -26,10 +26,31 @@ bvm, so a mirror or a modified download cannot pass as either.
 
 See [PLAN.md](PLAN.md) for the design.
 
-## Setup
+## Install
+
+Linux, macOS and WSL:
 
 ```sh
-bvm setup    # installs the shims in ~/.bvm/bin and adds them to your shell
+curl -fsSL https://raw.githubusercontent.com/absolutejs/bvm/main/install.sh | sh
 ```
+
+Windows (PowerShell):
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/absolutejs/bvm/main/install.ps1 | iex"
+```
+
+npm (any OS):
+
+```sh
+npm install --global @absolutejs/bvm && bvm setup
+```
+
+The installers verify the download, put `~/.bvm/bin` first on PATH in your
+shell's startup files (the user PATH and PowerShell profile on Windows), and
+make `bvm` work in the terminal you installed from. If Bun is already
+installed, bvm installs that same version, verified, as your default, so `bun`
+keeps meaning what it meant. Output is colored on a terminal; set `NO_COLOR`
+to turn it off.
 
 MIT licensed.

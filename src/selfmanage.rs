@@ -2,9 +2,9 @@
 //! newer signed release (`bvm self update`).
 
 use crate::channel::{get_bytes, get_text, latest_tag};
-use crate::paths;
 use crate::platform::exe_suffix;
 use crate::verify::{absolute_checksums, check_download};
+use crate::{paths, ui};
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -78,18 +78,26 @@ pub fn update() -> Result<()> {
     let latest = semver::Version::parse(tag.trim_start_matches('v'))?;
     let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))?;
     if latest <= current {
-        eprintln!("bvm: {current} is the latest release");
+        ui::done(format!(
+            "bvm {} is the latest release",
+            ui::err().version(&current)
+        ));
         return Ok(());
     }
     let asset = asset_name()?;
     let base = format!("https://github.com/{REPOSITORY}/releases/download/{tag}");
-    eprintln!("bvm: verifying bvm {latest} ({asset})");
+    let paint = ui::err();
+    ui::working(format!(
+        "Downloading bvm {} {}",
+        paint.version(&latest),
+        paint.dim(format!("({asset})"))
+    ));
     let list = get_bytes(&format!("{base}/SHASUMS256.txt"))?;
     let signature = get_text(&format!("{base}/SHASUMS256.txt.sig"))?;
     let checksums = absolute_checksums(&list, &signature)?;
     let binary = get_bytes(&format!("{base}/{asset}"))?;
     check_download(&checksums, &asset, &binary)?;
-    eprintln!("bvm: signature and checksum verified");
+    ui::done("Verified the AbsoluteJS signature and the checksum");
 
     let bin = paths::bin_dir()?;
     fs::create_dir_all(&bin)?;
@@ -102,16 +110,20 @@ pub fn update() -> Result<()> {
     }
     place_shims(&downloaded)?;
     let _ = fs::remove_file(&downloaded);
-    eprintln!("bvm: updated to {latest} in {}", bin.display());
+    ui::done(format!(
+        "Updated bvm to {} in {}",
+        paint.version(&latest),
+        paint.path(&bin)
+    ));
     let me = std::env::current_exe().ok();
     if let Some(me) = me
         && !me.starts_with(&bin)
     {
-        eprintln!(
-            "bvm: this bvm ({}) is outside {}; update it the way you installed it",
-            me.display(),
-            bin.display()
-        );
+        ui::warn(format!(
+            "this bvm ({}) is outside {}; update it the way you installed it",
+            paint.path(&me),
+            paint.path(&bin)
+        ));
     }
     Ok(())
 }

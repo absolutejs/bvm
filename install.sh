@@ -17,7 +17,20 @@ PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAQl0pUETGfqE4xLc4YcFrN/Yu1aZDVbDjkkF5HSTn7p0=
 -----END PUBLIC KEY-----'
 
-die() { echo "bvm install: $*" >&2; exit 1; }
+# Color and symbols on a terminal; plain `bvm install:` lines in pipes and
+# logs, or with NO_COLOR set.
+if { [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; } || [ -n "${CLICOLOR_FORCE:-}" ]; then
+  bold=$(printf '\033[1m') dim=$(printf '\033[2m') green=$(printf '\033[1;32m')
+  cyan=$(printf '\033[36m') red=$(printf '\033[1;31m') reset=$(printf '\033[0m')
+  ok() { printf '  %s✓%s %s\n' "$green" "$reset" "$*"; }
+  die() { printf '%serror:%s %s\n' "$red" "$reset" "$*" >&2; exit 1; }
+  color=1
+else
+  bold='' dim='' green='' cyan='' red='' reset=''
+  ok() { echo "bvm install: $*"; }
+  die() { echo "bvm install: $*" >&2; exit 1; }
+  color=''
+fi
 
 case "$(uname -s)" in
   Linux) os=linux ;;
@@ -30,6 +43,9 @@ case "$(uname -m)" in
   *) die "unsupported architecture $(uname -m)" ;;
 esac
 asset="bvm-$os-$arch"
+echo
+echo "  ${bold}Installing bvm$reset ${dim}(the Bun version manager, $os-$arch)$reset"
+echo
 base="https://github.com/$REPO/releases/latest/download"
 
 work=$(mktemp -d)
@@ -47,21 +63,23 @@ fi
 expected=$(awk -v name="$asset" '$2 == name || $2 == "*" name { print $1 }' "$work/SHASUMS256.txt")
 [ -n "$expected" ] || die "$asset is not in SHASUMS256.txt"
 [ "$actual" = "$expected" ] || die "$asset does not match its checksum"
+ok "Downloaded $bold$asset$reset; its checksum matches"
 
 printf '%s\n' "$PUBLIC_KEY" > "$work/key.pem"
 base64 -d < "$work/SHASUMS256.txt.sig" > "$work/sig.bin" 2>/dev/null || base64 -D < "$work/SHASUMS256.txt.sig" > "$work/sig.bin"
 if openssl pkeyutl -verify -pubin -inkey "$work/key.pem" -rawin -in "$work/SHASUMS256.txt" -sigfile "$work/sig.bin" >/dev/null 2>&1; then
-  echo "bvm install: signature verified (AbsoluteJS release key)"
+  ok "Signature verified (AbsoluteJS release key)"
 elif openssl version 2>/dev/null | grep -q '^OpenSSL 3'; then
   die "SHASUMS256.txt is not signed by the AbsoluteJS release key"
 else
-  echo "bvm install: this OpenSSL cannot check Ed25519 signatures; verified the checksum over HTTPS only"
+  ok "Checksum verified over HTTPS ${dim}(this OpenSSL cannot check Ed25519 signatures)$reset"
 fi
 
 mkdir -p "$BVM_DIR/bin"
 chmod +x "$work/$asset"
 mv "$work/$asset" "$BVM_DIR/bin/bvm"
-BVM_DIR="$BVM_DIR" "$BVM_DIR/bin/bvm" setup
+if [ -n "$color" ]; then tone=CLICOLOR_FORCE; else tone=NO_COLOR; fi
+env "$tone=1" BVM_FROM_INSTALLER=1 BVM_DIR="$BVM_DIR" "$BVM_DIR/bin/bvm" setup 2>&1
 
 # A script cannot change the PATH of the shell that ran it, so `bvm` would
 # only exist in new terminals. When a directory already on this shell's PATH
@@ -74,26 +92,36 @@ for dir in "$HOME/.local/bin" "$HOME/bin"; do
       if [ -d "$dir" ] && [ -w "$dir" ]; then
         ln -sf "$BVM_DIR/bin/bvm" "$dir/bvm"
         linked="$dir/bvm"
+        ok "Linked bvm into $bold$(echo "$dir" | sed "s|^$HOME|~|")$reset so it works in this terminal"
         break
       fi
       ;;
   esac
 done
 
+# Shown with $HOME rather than the expanded path, which is long and the same
+# for everyone.
+bvm_path=$(echo "$BVM_DIR/bin/bvm" | sed "s|^$HOME/|\$HOME/|")
 case "$(basename "${SHELL:-sh}")" in
-  fish) activate="\"$BVM_DIR/bin/bvm\" env --shell fish | source" ;;
-  *) activate="eval \"\$(\"$BVM_DIR/bin/bvm\" env)\"" ;;
+  fish) activate="\"$bvm_path\" env --shell fish | source" ;;
+  *) activate="eval \"\$(\"$bvm_path\" env)\"" ;;
 esac
 
+version=$("$BVM_DIR/bin/bvm" --version | cut -d' ' -f2)
+where=$(echo "$BVM_DIR" | sed "s|^$HOME|~|")
 echo
-echo "bvm install: installed bvm $("$BVM_DIR/bin/bvm" --version | cut -d' ' -f2) to $BVM_DIR"
+echo "  ${green}bvm $version$reset is installed in $bold$where$reset"
+echo
 if [ -n "$linked" ]; then
-  echo "  bvm works in this terminal now (linked at $linked)."
-  echo "  New terminals also switch bun and bunx per project. To get that here too, run:"
+  echo "  bvm works in this terminal now. New terminals also switch bun and bunx"
+  echo "  per project; to get that here too, run:"
 else
   echo "  New terminals are set up. To use bvm in this terminal now, run:"
 fi
 echo
-echo "    $activate"
+echo "    $cyan$activate$reset"
 echo
-echo "  Then: bvm install latest --default"
+if [ -z "$("$BVM_DIR/bin/bvm" ls 2>/dev/null)" ]; then
+  echo "  Then install Bun: $cyan""bvm install latest --default$reset"
+  echo
+fi

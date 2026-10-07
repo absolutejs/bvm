@@ -9,13 +9,14 @@ use std::path::{Path, PathBuf};
 
 const MARKER: &str = "# bvm (Bun version manager)";
 
-/// Shell code for `eval "$(bvm env)"`: PATH, then a `bvm` function whose `use`
-/// runs in this shell.
+/// Shell code for `eval "$(bvm env)"`: the shims first on PATH (ahead of a Bun
+/// installed before bvm, even one already on PATH), then a `bvm` function whose
+/// `use` runs in this shell.
 pub fn posix_env() -> Result<String> {
     let root = paths::root()?;
     Ok(format!(
         r#"export BVM_DIR="{root}"
-case ":$PATH:" in *":$BVM_DIR/bin:"*) ;; *) export PATH="$BVM_DIR/bin:$PATH" ;; esac
+case "$PATH" in "$BVM_DIR/bin:"*) ;; *) export PATH="$BVM_DIR/bin:$PATH" ;; esac
 bvm() {{
   if [ "$1" = use ]; then
     eval "$(command bvm use --print-env "$2")"
@@ -32,7 +33,7 @@ pub fn powershell_env() -> Result<String> {
     let root = paths::root()?;
     Ok(format!(
         r#"$env:BVM_DIR = "{root}"
-if (-not ($env:Path -split ';' -contains "$env:BVM_DIR\bin")) {{ $env:Path = "$env:BVM_DIR\bin;$env:Path" }}
+if (($env:Path -split ';')[0] -ne "$env:BVM_DIR\bin") {{ $env:Path = "$env:BVM_DIR\bin;$env:Path" }}
 function bvm {{
   if ($args[0] -eq 'use') {{ Invoke-Expression (& (Get-Command bvm -CommandType Application | Select-Object -First 1).Source use --print-env --shell powershell $args[1]) }}
   else {{ & (Get-Command bvm -CommandType Application | Select-Object -First 1).Source @args }}
@@ -199,7 +200,7 @@ pub fn fish_env() -> Result<String> {
     let root = paths::root()?;
     Ok(format!(
         r#"set -gx BVM_DIR "{root}"
-contains "$BVM_DIR/bin" $PATH; or set -gx PATH "$BVM_DIR/bin" $PATH
+test "$PATH[1]" = "$BVM_DIR/bin"; or set -gx PATH "$BVM_DIR/bin" $PATH
 function bvm
   if test "$argv[1]" = use
     command bvm use --print-env --shell fish $argv[2] | source

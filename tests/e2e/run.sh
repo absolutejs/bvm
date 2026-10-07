@@ -19,7 +19,20 @@ for flag in -v -V --version; do
 done
 pass "bvm -v, -V and --version print the version"
 
-"$BVM" install 1.4.2 --default
+if [ -z "$EXE" ]; then
+  # A Bun installed before bvm (here a stand-in that reports 1.4.2): setup
+  # installs that version through bvm, verified, and makes it the default.
+  mkdir -p "$HOME/.bun/bin"
+  printf '#!/bin/sh\necho 1.4.2\n' > "$HOME/.bun/bin/bun"
+  chmod +x "$HOME/.bun/bin/bun"
+  out=$(NO_COLOR=1 "$BVM" setup 2>&1)
+  case "$out" in *"Found Bun 1.4.2"*) ;; *) fail "setup did not find the existing Bun: $out" ;; esac
+  [ "$(cat "$BVM_DIR/default")" = "1.4.2" ] || fail "the existing Bun's version is not the default"
+  rm -rf "$HOME/.bun"
+  pass "setup adopts a Bun installed before bvm as the default"
+else
+  "$BVM" install 1.4.2 --default
+fi
 [ "$("$("$BVM" which 1.4.2)" --version)" = "1.4.2" ] || fail "official 1.4.2 did not install"
 pass "official Bun 1.4.2 installs after Bun's PGP signature verifies"
 
@@ -53,6 +66,17 @@ pass "the shim passes Bun's exit code through"
 
 # A checksum list that does not verify must stop the install before anything
 # is extracted. Serve the real 1.4.2 list with one digit changed.
+set +e; out=$("$BVM" install 9.9.9 2>&1); code=$?; set -e
+[ "$code" != "0" ] || fail "installing a version that does not exist succeeded"
+case "$out" in *"not a published release"*) ;; *) fail "unclear error for a missing version: $out" ;; esac
+pass "a version that does not exist gets a clear error"
+
+out=$(CLICOLOR_FORCE=1 "$BVM" ls)
+case "$out" in *"$(printf '\033[')"*) ;; *) fail "CLICOLOR_FORCE did not color the output" ;; esac
+out=$("$BVM" ls)
+case "$out" in *"$(printf '\033[')"*) fail "piped output has escape sequences" ;; esac
+pass "color on a terminal (or CLICOLOR_FORCE), none in pipes"
+
 set +e; out=$(BVM_TEST_TAMPER=1 "$BVM" install 1.4.1 2>&1); code=$?; set -e
 if [ "$code" = "0" ]; then fail "a tampered checksum list was accepted"; fi
 case "$out" in *"not signed by Bun's release key"*) ;; *) fail "unexpected refusal: $out" ;; esac

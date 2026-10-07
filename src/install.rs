@@ -2,9 +2,9 @@
 //! complete: the binary is extracted beside it and renamed into place.
 
 use crate::channel::{Channel, Version, get_bytes, get_text};
-use crate::paths;
 use crate::platform::{asset_stem, exe_suffix};
 use crate::verify::{absolute_checksums, check_download, official_checksums};
+use crate::{paths, ui};
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::io::Read;
@@ -33,19 +33,40 @@ pub fn installed() -> Result<Vec<Version>> {
 
 pub fn install(version: &Version) -> Result<()> {
     if is_installed(version)? {
-        eprintln!("bvm: Bun {version} is already installed");
+        let paint = ui::err();
+        ui::done(format!(
+            "Bun {} is already installed",
+            paint.version(version)
+        ));
         return Ok(());
     }
     let stem = asset_stem(version.channel())?;
     let zip_name = format!("{stem}.zip");
-    eprintln!("bvm: verifying Bun {version} ({zip_name})");
+    let paint = ui::err();
+    ui::working(format!(
+        "Downloading Bun {} {}",
+        paint.version(version),
+        paint.dim(format!("({zip_name})"))
+    ));
+    let unpublished = |error: anyhow::Error| match error.downcast_ref::<ureq::Error>() {
+        Some(ureq::Error::StatusCode(404)) => anyhow!(
+            "Bun {version} is not a published release; `bvm ls-remote{}` lists the ones that are",
+            if version.channel() == Channel::Absolute {
+                " --absolute"
+            } else {
+                ""
+            }
+        ),
+        _ => error,
+    };
     let checksums = match version.channel() {
         Channel::Official => {
-            let signed = get_text(&version.download_url("SHASUMS256.txt.asc"))?;
+            let signed =
+                get_text(&version.download_url("SHASUMS256.txt.asc")).map_err(unpublished)?;
             official_checksums(&tampered_for_tests(signed))?
         }
         Channel::Absolute => {
-            let list = get_bytes(&version.download_url("SHASUMS256.txt"))?;
+            let list = get_bytes(&version.download_url("SHASUMS256.txt")).map_err(unpublished)?;
             let signature = get_text(&version.download_url("SHASUMS256.txt.sig"))
                 .context("this AbsoluteJS build has no signature (SHASUMS256.txt.sig); bvm will not install it")?;
             absolute_checksums(&list, &signature)?
@@ -53,7 +74,10 @@ pub fn install(version: &Version) -> Result<()> {
     };
     let archive = get_bytes(&version.download_url(&zip_name))?;
     check_download(&checksums, &zip_name, &archive)?;
-    eprintln!("bvm: signature and checksum verified");
+    ui::done(match version.channel() {
+        Channel::Official => "Verified Bun's PGP signature and the checksum",
+        Channel::Absolute => "Verified the AbsoluteJS signature and the checksum",
+    });
 
     let binary_name = format!("bun{}", exe_suffix());
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
@@ -78,7 +102,7 @@ pub fn install(version: &Version) -> Result<()> {
     }
     let _ = fs::remove_dir_all(&target);
     fs::rename(&staging, &target).with_context(|| format!("moving Bun {version} into place"))?;
-    eprintln!("bvm: installed Bun {version}");
+    ui::done(format!("Installed Bun {}", paint.version(version)));
     Ok(())
 }
 
@@ -105,6 +129,6 @@ pub fn uninstall(version: &Version) -> Result<()> {
         return Err(anyhow!("Bun {version} is not installed"));
     }
     fs::remove_dir_all(&dir)?;
-    eprintln!("bvm: removed Bun {version}");
+    ui::done(format!("Removed Bun {}", ui::err().version(version)));
     Ok(())
 }

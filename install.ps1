@@ -16,6 +16,10 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
   default { throw "bvm: unsupported architecture $($env:PROCESSOR_ARCHITECTURE)" }
 }
 $asset = "bvm-windows-$arch.exe"
+function Ok($text) { Write-Host '  ' -NoNewline; Write-Host ([char]0x221A) -ForegroundColor Green -NoNewline; Write-Host " $text" }
+Write-Host ''
+Write-Host '  Installing bvm' -NoNewline; Write-Host " (the Bun version manager, windows-$arch)" -ForegroundColor DarkGray
+Write-Host ''
 $base = "https://github.com/$repo/releases/latest/download"
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("bvm-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $work | Out-Null
@@ -27,6 +31,7 @@ try {
   $expected = ($line -split '\s+')[0].ToLower()
   $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $work $asset)).Hash.ToLower()
   if ($actual -ne $expected) { throw "bvm: $asset does not match its checksum" }
+  Ok "Downloaded $asset; its checksum matches"
   $bin = Join-Path $bvmDir 'bin'
   New-Item -ItemType Directory -Force -Path $bin | Out-Null
   $target = Join-Path $bin 'bvm.exe'
@@ -36,16 +41,22 @@ try {
   # The profile this PowerShell actually loads: it follows a OneDrive-redirected
   # Documents folder and differs between PowerShell 7 and Windows PowerShell 5.1.
   $env:BVM_POWERSHELL_PROFILE = $PROFILE.CurrentUserCurrentHost
+  $env:BVM_FROM_INSTALLER = '1'
   & $target setup
-  Remove-Item Env:\BVM_POWERSHELL_PROFILE -ErrorAction SilentlyContinue
+  Remove-Item Env:\BVM_POWERSHELL_PROFILE, Env:\BVM_FROM_INSTALLER -ErrorAction SilentlyContinue
   # `irm ... | iex` runs in this session, so bvm can be live here right away:
   # PATH (new windows read it from the user environment) and the `bvm use`
   # function.
   if (-not ($env:Path -split ';' -contains $bin)) { $env:Path = "$bin;$env:Path" }
   Invoke-Expression (& $target env --shell powershell | Out-String)
+  $version = (& $target --version) -replace '^bvm ', ''
   Write-Host ''
-  Write-Host "bvm: installed $(& $target --version) to $bvmDir. It works in this window and new ones."
-  Write-Host '  Next: bvm install latest --default'
+  Write-Host "  bvm $version" -ForegroundColor Green -NoNewline; Write-Host " is installed in $bvmDir"
+  Write-Host '  It works in this window and in new ones.'
+  Write-Host ''
+  # With no Bun installed yet, `bvm ls` itself says how to install one (on
+  # stderr, which reaches the console; its stdout listing is discarded here).
+  & $target ls | Out-Null
 }
 finally {
   Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
