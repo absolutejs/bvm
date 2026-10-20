@@ -25,8 +25,10 @@ impl Channel {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Version {
     pub bun: semver::Version,
-    /// `Some(n)` for `<bun>-absolute.<n>`.
+    /// `Some(n)` for `<bun>+absolute.<n>` or a legacy hyphen label.
     pub absolute: Option<u32>,
+    /// Preserve old release tags and installation directories verbatim.
+    legacy_absolute: bool,
 }
 
 impl Version {
@@ -35,7 +37,14 @@ impl Version {
             .trim()
             .trim_start_matches("bun-v")
             .trim_start_matches('v');
-        let (base, absolute) = match text.split_once("-absolute.") {
+        let legacy_absolute = text.contains("-absolute.");
+        let (base, absolute) = match text
+            .split_once("+absolute.")
+            .or_else(|| text.split_once("-absolute."))
+        {
+            Some((_, n)) if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) => {
+                bail!("bad AbsoluteJS build number in {text}");
+            }
             Some((base, n)) => (
                 base,
                 Some(
@@ -47,10 +56,17 @@ impl Version {
         };
         let bun =
             semver::Version::parse(base).with_context(|| format!("{text} is not a Bun version"))?;
+        if !bun.build.is_empty() {
+            bail!("{text}: unsupported build metadata");
+        }
         if !bun.pre.is_empty() {
             bail!("{text}: prerelease and canary builds are not managed by bvm");
         }
-        Ok(Self { bun, absolute })
+        Ok(Self {
+            bun,
+            absolute,
+            legacy_absolute,
+        })
     }
 
     pub fn channel(&self) -> Channel {
@@ -69,7 +85,7 @@ impl Version {
         format!(
             "https://github.com/{}/releases/download/{}/{file}",
             self.channel().repository(),
-            self.tag()
+            self.tag().replace('+', "%2B")
         )
     }
 }
@@ -77,7 +93,12 @@ impl Version {
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.absolute {
-            Some(n) => write!(f, "{}-absolute.{n}", self.bun),
+            Some(n) => write!(
+                f,
+                "{}{}absolute.{n}",
+                self.bun,
+                if self.legacy_absolute { "-" } else { "+" }
+            ),
             None => write!(f, "{}", self.bun),
         }
     }
@@ -182,7 +203,7 @@ pub fn latest_tag(repository: &str) -> Result<String> {
         .get("location")
         .and_then(|value| value.to_str().ok())
         .and_then(|location| location.split_once("/releases/tag/"))
-        .map(|(_, tag)| tag.to_string())
+        .map(|(_, tag)| tag.replace("%2B", "+").replace("%2b", "+"))
         .filter(|tag| !tag.is_empty())
         .ok_or_else(|| anyhow!("{repository} has no published release"))
 }
@@ -228,5 +249,29 @@ mod tests {
         assert_eq!(patched.tag(), "bun-v1.4.2-absolute.1");
         assert!(Version::parse("1.4.0-canary.1").is_err());
         assert!(Version::parse("nope").is_err());
+        let metadata = Version::parse("bun-v1.4.3+absolute.2").unwrap();
+        assert_eq!(metadata.channel(), Channel::Absolute);
+        assert_eq!(metadata.to_string(), "1.4.3+absolute.2");
+        assert_eq!(metadata.tag(), "bun-v1.4.3+absolute.2");
+        assert!(
+            metadata
+                .download_url("bun.zip")
+                .contains("bun-v1.4.3%2Babsolute.2/")
+        );
+        assert!(
+            semver::VersionReq::parse(">=1.4.3")
+                .unwrap()
+                .matches(&metadata.bun)
+        );
+        assert_ne!(metadata, Version::parse("1.4.3-absolute.2").unwrap());
+        for bad in [
+            "1.4.3+other.1",
+            "1.4.3+absolute.x",
+            "1.4.3+absolute.+1",
+            "1.4.3+absolute.1+other",
+            "1.4.3-rc.1+absolute.1",
+        ] {
+            assert!(Version::parse(bad).is_err(), "{bad}");
+        }
     }
 }

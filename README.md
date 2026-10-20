@@ -69,3 +69,17 @@ on Windows, your user PATH and PowerShell profile) and leaves the rest of
 those files as they were.
 
 MIT licensed.
+
+## Patched build identity
+
+New AbsoluteJS builds use build metadata, for example `1.4.3+absolute.2`.
+BVM accepts these alongside existing `1.4.2-absolute.1` releases, preserving
+each release's exact tag and installation directory. Both satisfy engine
+ranges according to their upstream Bun version.
+
+`bun -v` and `Bun.version` come from the executable, unchanged by BVM. New
+patched binaries embed their AbsoluteJS label; older binaries still report
+only the upstream version. `bvm current` shows the selected release and why;
+`bvm which` shows its binary. Inside an application, `process.execPath`
+identifies the executable actually running it. Updating BVM does not relabel
+or replace an already installed Bun.

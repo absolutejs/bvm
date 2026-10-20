@@ -49,6 +49,19 @@ export PATH="$BVM_DIR/bin:$PATH"
 [ -x "$BVM_DIR/bin/bun$EXE" ] || fail "no bun shim"
 pass "setup installs the shims"
 
+# Synthetic installation using a known binary: test metadata selection without
+# needing to publish a patched Bun release just to test the manager.
+mkdir -p "$BVM_DIR/versions/1.4.2+absolute.99" "$WORK/metadata"
+cp "$BVM_DIR/versions/1.4.2-absolute.1/bun$EXE" "$BVM_DIR/versions/1.4.2+absolute.99/bun$EXE"
+echo '1.4.2+absolute.99' > "$WORK/metadata/.bun-version"
+selected=$(cd "$WORK/metadata" && "$BVM" current)
+case "$selected" in '1.4.2+absolute.99 '*) ;; *) fail "metadata pin: $selected" ;; esac
+[ "$(cd "$WORK/metadata" && bun -p 'process.execPath.includes("1.4.2+absolute.99")')" = true ] || fail "metadata pin launched wrong binary"
+[ "$(cd "$WORK/metadata" && bun -v)" = 1.4.2 ] || fail "shim rewrote binary version"
+"$BVM" uninstall 1.4.2+absolute.99
+pass "metadata labels select the exact installation without rewriting Bun output"
+
+
 PROBE='const t=new Bun.Transpiler({loader:"tsx",reactFastRefresh:true});console.log(t.transformSync("export function A(){return <b/>}").includes("$RefreshReg$")?"patched":"stock")'
 mkdir -p "$WORK/pinned/deep" "$WORK/engines"
 echo "1.4.2-absolute.1" > "$WORK/pinned/.bun-version"
