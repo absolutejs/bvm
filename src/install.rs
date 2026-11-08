@@ -67,8 +67,18 @@ pub fn install(version: &Version) -> Result<()> {
         }
         Channel::Absolute => {
             let list = get_bytes(&version.download_url("SHASUMS256.txt")).map_err(unpublished)?;
-            let signature = get_text(&version.download_url("SHASUMS256.txt.sig"))
-                .context("this AbsoluteJS build has no signature (SHASUMS256.txt.sig); bvm will not install it")?;
+            // Only a 404 means the signature is missing. Any other failure is
+            // the download, and calling it unsigned reads like a tampered release.
+            let signature = get_text(&version.download_url("SHASUMS256.txt.sig")).map_err(
+                |error| match error.downcast_ref::<ureq::Error>() {
+                    Some(ureq::Error::StatusCode(404)) => anyhow!(
+                        "this AbsoluteJS build has no signature (SHASUMS256.txt.sig); bvm will not install it"
+                    ),
+                    _ => error.context(
+                        "could not download this AbsoluteJS build's signature (SHASUMS256.txt.sig); try again",
+                    ),
+                },
+            )?;
             absolute_checksums(&list, &signature)?
         }
     };
